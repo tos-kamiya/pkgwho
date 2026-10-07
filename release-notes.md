@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.4 - 2026-10-07
+
+- Add JSON output for one or more commands.
+- Add `-o` / `--output` to save results to a file.
+
 ## 0.0.3 - 2026-10-07
 
 - Add package detection for pipx, uv tools, Cargo, and Homebrew.
