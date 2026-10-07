@@ -1,8 +1,8 @@
 # pkgwho
 
-Find out which supported package manager installed a command on Linux. The
-initial version checks dpkg/apt, Snap, and Flatpak and suggests how to remove
-the package. It never uninstalls anything automatically.
+Find out which supported package manager installed a command on Linux. pkgwho
+checks dpkg/apt, Snap, Flatpak, pipx, uv tools, Cargo, and Homebrew, and suggests
+how to remove the package. It never uninstalls anything automatically.
 
 ```console
 $ pkgwho git
@@ -21,11 +21,11 @@ pkgwho git snap flatpak
 pkgwho /usr/local/bin/my-command
 ```
 
-If a command is not found in `PATH`, pkgwho searches installed dpkg, Snap,
-and Flatpak package names using a case-insensitive partial match. For example,
-`pkgwho chrome` can find an installed package named `google-chrome-stable`.
-For a command found in `PATH`, pkgwho also checks other managers for matching
-package names and reports those alongside related database records.
+If a command is not found in `PATH`, pkgwho searches installed package names
+using a case-insensitive partial match. For example, `pkgwho chrome` can find
+an installed package named `google-chrome-stable`. For a command found in
+`PATH`, pkgwho checks manager databases for matching package names and
+executable records.
 The output separates PATH resolution from package-manager database records and
 labels path records separately from package-name matches.
 For dpkg package searches, pkgwho shows a whitelist of user-facing sections
@@ -55,6 +55,10 @@ usage details. If no supported manager claims the executable, pkgwho reports
 - **Snap**: checks commands exposed in `/snap/bin` against installed snaps.
 - **Flatpak**: recognizes application launchers exported in Flatpak's
   `exports/bin` directories.
+- **pipx**: maps exposed applications from `pipx list` to their environments.
+- **uv**: maps exposed executables from `uv tool list` to installed tools.
+- **Cargo**: maps binaries from `cargo install --list` to installed crates.
+- **Homebrew**: queries installed formulae and matches files listed by Homebrew.
 
 ## License
 

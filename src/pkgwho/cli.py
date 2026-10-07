@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
@@ -83,6 +86,7 @@ def _dpkg_owner(paths: Sequence[Path]) -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
 def _snap_packages() -> set[str]:
     output = _run(["snap", "list"])
     if not output:
@@ -105,9 +109,180 @@ def _snap_owner(executable: Path) -> str | None:
     return max(matches, key=len) if matches else None
 
 
+@lru_cache(maxsize=1)
 def _flatpak_apps() -> set[str]:
     output = _run(["flatpak", "list", "--app", "--columns=application"])
     return set(output.splitlines()) if output else set()
+
+
+@lru_cache(maxsize=1)
+def _pipx_tools() -> list[tuple[str, set[str]]]:
+    output = _run(["pipx", "list", "--output", "json"])
+    if not output:
+        return []
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+
+    tools = []
+    venvs = data.get("venvs", {})
+    if not isinstance(venvs, dict):
+        return tools
+    for environment, record in venvs.items():
+        if not isinstance(record, dict):
+            continue
+        metadata = record.get("metadata", record)
+        if not isinstance(metadata, dict):
+            continue
+        main_package = metadata.get("main_package", {})
+        if not isinstance(main_package, dict):
+            continue
+        package = main_package.get("package") or environment
+        apps = set()
+        for app in main_package.get("apps", []):
+            if isinstance(app, str):
+                apps.add(Path(app).name)
+        dependency_apps = main_package.get("apps_of_dependencies", {})
+        if isinstance(dependency_apps, dict):
+            for app_list in dependency_apps.values():
+                if isinstance(app_list, list):
+                    apps.update(Path(app).name for app in app_list if isinstance(app, str))
+        tools.append((str(package), apps))
+    return tools
+
+
+@lru_cache(maxsize=1)
+def _uv_tools() -> list[tuple[str, set[str]]]:
+    output = _run(["uv", "tool", "list", "--show-paths"])
+    if not output:
+        return []
+
+    tools: list[tuple[str, set[str]]] = []
+    current_package: str | None = None
+    current_apps: set[str] = set()
+    for line in output.splitlines():
+        header = re.match(r"^(\S+)\s+v\S+", line)
+        if header:
+            if current_package is not None:
+                tools.append((current_package, current_apps))
+            current_package = header.group(1)
+            current_apps = set()
+            continue
+        app = re.match(r"^\s+-\s+(\S+)\s*$", line)
+        if app and "/" not in app.group(1):
+            current_apps.add(Path(app.group(1)).name)
+    if current_package is not None:
+        tools.append((current_package, current_apps))
+    return tools
+
+
+@lru_cache(maxsize=1)
+def _cargo_tools() -> list[tuple[str, set[str]]]:
+    output = _run(["cargo", "install", "--list"])
+    if not output:
+        return []
+
+    tools: list[tuple[str, set[str]]] = []
+    current_package: str | None = None
+    current_bins: set[str] = set()
+    for line in output.splitlines():
+        header = re.match(r"^(.+?)\s+v[^\s:]+:", line)
+        if header:
+            if current_package is not None:
+                tools.append((current_package, current_bins))
+            current_package = header.group(1)
+            current_bins = set()
+            continue
+        binary = re.match(r"^\s+([^\s]+)\s*$", line)
+        if binary:
+            current_bins.add(binary.group(1))
+    if current_package is not None:
+        tools.append((current_package, current_bins))
+    return tools
+
+
+@lru_cache(maxsize=1)
+def _brew_packages() -> list[tuple[str, str]]:
+    packages = []
+    for kind, args in (
+        ("formula", ["brew", "list", "--formula"]),
+        ("cask", ["brew", "list", "--cask"]),
+    ):
+        output = _run(args)
+        if output:
+            packages.extend((kind, line.strip()) for line in output.splitlines() if line.strip())
+    return packages
+
+
+@lru_cache(maxsize=1)
+def _brew_owner(paths: tuple[Path, ...]) -> str | None:
+    output = _run(["brew", "list", "--formula", "--verbose"])
+    if not output:
+        return None
+    expected = {path.resolve() for path in paths}
+    for line in output.splitlines():
+        candidate = Path(line.strip())
+        if not candidate.is_absolute():
+            continue
+        try:
+            if candidate.resolve() in expected:
+                parts = candidate.parts
+                if "Cellar" in parts:
+                    index = parts.index("Cellar")
+                    if index + 1 < len(parts):
+                        return parts[index + 1]
+        except OSError:
+            continue
+    return None
+
+
+def _pipx_owner(executable: Path, realpath: Path) -> str | None:
+    expected_root = Path(
+        os.environ.get("PIPX_HOME", Path.home() / ".local/share/pipx")
+    ).expanduser()
+    try:
+        is_pipx_path = realpath.is_relative_to(expected_root)
+    except (OSError, ValueError):
+        is_pipx_path = False
+    if not is_pipx_path:
+        return None
+    for package, apps in _pipx_tools():
+        if executable.name in apps:
+            return package
+    return None
+
+
+def _uv_owner(executable: Path, realpath: Path) -> str | None:
+    expected_root = Path(
+        os.environ.get("UV_TOOL_DIR", Path.home() / ".local/share/uv/tools")
+    ).expanduser()
+    try:
+        is_uv_path = realpath.is_relative_to(expected_root)
+    except (OSError, ValueError):
+        is_uv_path = False
+    if not is_uv_path:
+        return None
+    for package, apps in _uv_tools():
+        if executable.name in apps:
+            return package
+    return None
+
+
+def _cargo_owner(executable: Path, realpath: Path) -> str | None:
+    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo")).expanduser()
+    try:
+        is_cargo_path = executable.is_relative_to(cargo_home / "bin") or realpath.is_relative_to(
+            cargo_home / "bin"
+        )
+    except (OSError, ValueError):
+        is_cargo_path = False
+    if not is_cargo_path:
+        return None
+    for package, binaries in _cargo_tools():
+        if executable.name in binaries:
+            return package
+    return None
 
 
 def _search_installed_packages(query: str) -> list[PackageMatch]:
@@ -162,6 +337,39 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
                         display_name or None,
                     )
                 )
+
+    for manager, tools, uninstall_prefix in (
+        ("pipx", _pipx_tools(), "pipx uninstall "),
+        ("uv", _uv_tools(), "uv tool uninstall "),
+        ("cargo", _cargo_tools(), "cargo uninstall "),
+    ):
+        for package, commands in tools:
+            matching_command = next(
+                (name for name in sorted(commands) if needle in _normalize_name(name)),
+                None,
+            )
+            if needle in _normalize_name(package) or matching_command:
+                matches.append(
+                    PackageMatch(
+                        manager,
+                        package,
+                        uninstall_prefix + shlex.quote(package),
+                        display_name=matching_command,
+                    )
+                )
+
+    for kind, package in _brew_packages():
+        if needle in _normalize_name(package):
+            uninstall = "brew uninstall "
+            if kind == "cask":
+                uninstall += "--cask "
+            matches.append(
+                PackageMatch(
+                    "brew",
+                    package,
+                    uninstall + shlex.quote(package),
+                )
+            )
 
     return matches
 
@@ -336,6 +544,50 @@ def inspect(command: str) -> Result:
             )
         )
 
+    package = _pipx_owner(executable, realpath)
+    if package:
+        direct_matches.append(
+            PackageMatch(
+                "pipx",
+                package,
+                "pipx uninstall " + shlex.quote(package),
+                evidence="pipx exposed app",
+            )
+        )
+
+    package = _uv_owner(executable, realpath)
+    if package:
+        direct_matches.append(
+            PackageMatch(
+                "uv",
+                package,
+                "uv tool uninstall " + shlex.quote(package),
+                evidence="uv exposed app",
+            )
+        )
+
+    package = _cargo_owner(executable, realpath)
+    if package:
+        direct_matches.append(
+            PackageMatch(
+                "cargo",
+                package,
+                "cargo uninstall " + shlex.quote(package),
+                evidence="Cargo installed binary",
+            )
+        )
+
+    package = _brew_owner(paths)
+    if package:
+        direct_matches.append(
+            PackageMatch(
+                "brew",
+                package,
+                "brew uninstall " + shlex.quote(package),
+                evidence="Homebrew file record",
+            )
+        )
+
     # Also search other managers for the command or the package name that owns
     # its active executable. This can reveal parallel installs such as a deb
     # and a Flatpak with differently punctuated names (draw.io / drawio).
@@ -462,7 +714,7 @@ def _format_search(
         lines.extend(
             [
                 "  manager:    unknown",
-                "  note:       no installed dpkg, snap, or flatpak package matched",
+                "  note:       no installed dpkg, snap, flatpak, pipx, uv, Cargo, or Homebrew package matched",
             ]
         )
     else:
