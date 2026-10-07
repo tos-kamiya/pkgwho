@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pkgwho"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Toshihiro Kamiya", email = "kamiya@mbj.nifty.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["mypy>=1.0.0"]
+
+[project.scripts]
+pkgwho = "pkgwho.cli:main"
+
+[project.urls]
+Documentation = "http://github.com/tos-kamiya/pkgwho#readme"
+Issues = "http://github.com/tos-kamiya/pkgwho/issues"
+Source = "http://github.com/tos-kamiya/pkgwho"
+
+[tool.hatch.version]
+path = "src/pkgwho/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/pkgwho tests}"
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/pkgwho"]
+
+[tool.coverage.run]
+source_pkgs = ["pkgwho", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/pkgwho/__about__.py",
+]
+
+[tool.coverage.paths]
+pkgwho = ["src/pkgwho", "*/pkgwho/src/pkgwho"]
+tests = ["tests", "*/pkgwho/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
