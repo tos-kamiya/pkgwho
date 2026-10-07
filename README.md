@@ -24,6 +24,10 @@ pkgwho /usr/local/bin/my-command
 If a command is not found in `PATH`, pkgwho searches installed dpkg, Snap,
 and Flatpak package names using a case-insensitive partial match. For example,
 `pkgwho chrome` can find an installed package named `google-chrome-stable`.
+For a command found in `PATH`, pkgwho also checks other managers for matching
+package names and reports those alongside related database records.
+The output separates PATH resolution from package-manager database records and
+labels path records separately from package-name matches.
 
 Install from a checkout with `pip install .`, then run `pkgwho --help` for
 usage details. If no supported manager claims the executable, pkgwho reports

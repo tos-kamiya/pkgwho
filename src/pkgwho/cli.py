@@ -11,7 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -27,6 +27,7 @@ class Result:
     package: str | None = None
     uninstall: str | None = None
     note: str | None = None
+    matches: list[PackageMatch] = field(default_factory=list)
 
 
 @dataclass
@@ -35,6 +36,7 @@ class PackageMatch:
     package: str
     uninstall: str
     display_name: str | None = None
+    evidence: str = "name match"
 
 
 def _run(args: Sequence[str]) -> str | None:
@@ -109,7 +111,7 @@ def _flatpak_apps() -> set[str]:
 
 def _search_installed_packages(query: str) -> list[PackageMatch]:
     """Find installed packages whose identifier or display name contains query."""
-    needle = query.casefold()
+    needle = _normalize_name(query)
     matches: list[PackageMatch] = []
 
     output = _run(
@@ -118,7 +120,7 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
     if output:
         for line in output.splitlines():
             package, separator, _version = line.partition("\t")
-            if separator and needle in package.casefold():
+            if separator and needle in _normalize_name(package):
                 matches.append(
                     PackageMatch(
                         "dpkg",
@@ -128,7 +130,7 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
                 )
 
     for package in sorted(_snap_packages()):
-        if needle in package.casefold():
+        if needle in _normalize_name(package):
             matches.append(
                 PackageMatch(
                     "snap",
@@ -147,7 +149,7 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
                 fields = line.split(None, 1)
             app_id = fields[0].strip()
             display_name = fields[1].strip() if len(fields) > 1 else ""
-            if needle in app_id.casefold() or needle in display_name.casefold():
+            if needle in _normalize_name(app_id) or needle in _normalize_name(display_name):
                 matches.append(
                     PackageMatch(
                         "flatpak",
@@ -158,6 +160,11 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
                 )
 
     return matches
+
+
+def _normalize_name(value: str) -> str:
+    """Normalize package names for case- and punctuation-insensitive matching."""
+    return "".join(character for character in value.casefold() if character.isalnum())
 
 
 def _flatpak_owner(executable: Path) -> str | None:
@@ -184,50 +191,96 @@ def inspect(command: str) -> Result:
     except OSError:
         realpath = executable
 
-    paths = (executable, realpath) if executable != realpath else (executable,)
+    is_manager_launcher = executable.parent == Path("/snap/bin") or (
+        "exports" in executable.parts and "bin" in executable.parts
+    )
+    paths = (
+        (executable,)
+        if is_manager_launcher or executable == realpath
+        else (executable, realpath)
+    )
 
+    direct_matches: list[PackageMatch] = []
     package = _dpkg_owner(paths)
     if package:
-        return Result(
-            command,
-            str(executable),
-            str(realpath),
-            "dpkg",
-            package,
-            "sudo apt remove " + shlex.quote(package),
+        direct_matches.append(
+            PackageMatch(
+                "dpkg",
+                package,
+                "sudo apt remove " + shlex.quote(package),
+                evidence="dpkg path record",
+            )
         )
 
     package = _snap_owner(executable)
     if package:
-        return Result(
-            command,
-            str(executable),
-            str(realpath),
-            "snap",
-            package,
-            "sudo snap remove " + shlex.quote(package),
+        direct_matches.append(
+            PackageMatch(
+                "snap",
+                package,
+                "sudo snap remove " + shlex.quote(package),
+                evidence="snap command path",
+            )
         )
 
     package = _flatpak_owner(executable)
     if package:
-        return Result(
-            command,
-            str(executable),
-            str(realpath),
-            "flatpak",
-            package,
-            "flatpak uninstall " + shlex.quote(package),
+        direct_matches.append(
+            PackageMatch(
+                "flatpak",
+                package,
+                "flatpak uninstall " + shlex.quote(package),
+                evidence="Flatpak export path",
+            )
         )
 
+    # Also search other managers for the command or the package name that owns
+    # its active executable. This can reveal parallel installs such as a deb
+    # and a Flatpak with differently punctuated names (draw.io / drawio).
+    search_terms = {executable.name}
+    search_terms.update(match.package for match in direct_matches)
+    direct_managers = {match.manager for match in direct_matches}
+    matches = list(direct_matches)
+    seen = {(match.manager, match.package) for match in matches}
+    for term in search_terms:
+        normalized_term = _normalize_name(term)
+        if not normalized_term:
+            continue
+        for candidate in _search_installed_packages(term):
+            identity = (candidate.manager, candidate.package)
+            if identity in seen or candidate.manager in direct_managers:
+                continue
+            candidate_names = [candidate.package, candidate.display_name or ""]
+            if not any(
+                normalized_term == _normalize_name(name)
+                or (
+                    len(normalized_term) >= 4
+                    and normalized_term in _normalize_name(name)
+                )
+                for name in candidate_names
+            ):
+                continue
+            seen.add(identity)
+            matches.append(candidate)
+
+    matches.sort(
+        key=lambda match: (match.evidence == "name match", match.manager, match.package)
+    )
+    note = None
+    if not matches:
+        note = (
+            "no supported package manager claims this executable; "
+            "it may have been installed manually or by another installer"
+        )
     return Result(
         command,
         str(executable),
         str(realpath),
-        "unknown",
-        note=(
-            "no supported package manager claims this executable; "
-            "it may have been installed manually or by another installer"
-        ),
+        matches[0].manager if matches else "unknown",
+        matches[0].package if matches else None,
+        matches[0].uninstall if matches else None,
+        note,
+        matches,
     )
 
 
@@ -240,15 +293,23 @@ def _format(result: Result) -> str:
 
     lines.extend(
         [
-            "  executable: " + result.executable,
-            "  realpath:   " + (result.realpath or result.executable),
-            "  manager:    " + result.manager,
+            "  PATH resolution:",
+            "    executable: " + result.executable,
+            "    realpath:   " + (result.realpath or result.executable),
         ]
     )
-    if result.package:
-        lines.append("  package:    " + result.package)
-    if result.uninstall:
-        lines.append("  uninstall:  " + result.uninstall)
+    if result.matches:
+        lines.append("  package manager records:")
+        for match in result.matches:
+            description = "    - {} ({}): {}".format(
+                match.manager, match.evidence, match.package
+            )
+            if match.display_name and _normalize_name(match.display_name) != _normalize_name(match.package):
+                description += " ({})".format(match.display_name)
+            lines.append(description)
+            lines.append("        uninstall: " + match.uninstall)
+    else:
+        lines.append("  manager:    unknown")
     if result.note:
         lines.append("  note:       " + result.note)
     return "\n".join(lines)
@@ -265,7 +326,7 @@ def _format_search(command: str, matches: Sequence[PackageMatch]) -> str:
         )
         return "\n".join(lines)
 
-    lines.append("  package matches:")
+    lines.append("  package name matches:")
     shown = matches[:20]
     for match in shown:
         description = "  - {}: {}".format(match.manager, match.package)
