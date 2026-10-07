@@ -28,6 +28,22 @@ For a command found in `PATH`, pkgwho also checks other managers for matching
 package names and reports those alongside related database records.
 The output separates PATH resolution from package-manager database records and
 labels path records separately from package-name matches.
+For dpkg package searches, pkgwho shows a whitelist of user-facing sections
+and recognizable tool package names by default. Kernel, firmware, library,
+documentation, and other unlisted packages are hidden. Filtering and display
+limits are controlled independently:
+
+| Options | Packages selected | Display limit |
+| --- | --- | --- |
+| Default (`--apps-only true`) | Application/tool candidates | 20 |
+| `--no-limit` | Application/tool candidates | Unlimited |
+| `--apps-only false` | All matching packages, including libraries | 20 |
+| `--apps-only false --no-limit` | All matching packages, including libraries | Unlimited |
+
+For example, `pkgwho nvidia --no-limit` displays all selected application/tool
+candidates. `--apps-only` accepts `true` or `false` and defaults to `true`. The
+earlier `--all-packages` and `--all-non-libraries` options have been replaced
+by these independent controls.
 
 Install from a checkout with `pip install .`, then run `pkgwho --help` for
 usage details. If no supported manager claims the executable, pkgwho reports

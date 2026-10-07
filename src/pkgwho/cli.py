@@ -37,6 +37,7 @@ class PackageMatch:
     uninstall: str
     display_name: str | None = None
     evidence: str = "name match"
+    section: str | None = None
 
 
 def _run(args: Sequence[str]) -> str | None:
@@ -115,17 +116,20 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
     matches: list[PackageMatch] = []
 
     output = _run(
-        ["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\n"]
+        ["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${Section}\n"]
     )
     if output:
         for line in output.splitlines():
-            package, separator, _version = line.partition("\t")
-            if separator and needle in _normalize_name(package):
+            fields = line.split("\t", 2)
+            if len(fields) >= 2 and needle in _normalize_name(fields[0]):
+                package = fields[0]
+                section = fields[2].strip() if len(fields) > 2 else ""
                 matches.append(
                     PackageMatch(
                         "dpkg",
                         package,
                         "sudo apt remove " + shlex.quote(package),
+                        section=section or None,
                     )
                 )
 
@@ -165,6 +169,104 @@ def _search_installed_packages(query: str) -> list[PackageMatch]:
 def _normalize_name(value: str) -> str:
     """Normalize package names for case- and punctuation-insensitive matching."""
     return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _show_dpkg_match_by_default(match: PackageMatch) -> bool:
+    if match.manager != "dpkg":
+        return True
+
+    section = (match.section or "").casefold().rsplit("/", 1)[-1]
+    if section in {
+        "admin",
+        "comm",
+        "editors",
+        "games",
+        "graphics",
+        "interpreters",
+        "net",
+        "science",
+        "shells",
+        "sound",
+        "utils",
+        "video",
+        "web",
+        "x11",
+    }:
+        return True
+
+    if section in {
+        "debug",
+        "doc",
+        "documentation",
+        "kernel",
+        "libdevel",
+        "libs",
+        "misc",
+        "oldlibs",
+    }:
+        return False
+
+    # Some third-party repositories use a vendor name as the Section (for
+    # example, "NVIDIA"). Allow recognizable command/tool package names there,
+    # while leaving kernels, firmware, libraries, documentation, and meta
+    # packages hidden by default.
+    package = match.package.split(":", 1)[0].casefold()
+    tool_tokens = {
+        "bin",
+        "cli",
+        "gdb",
+        "settings",
+        "smi",
+        "toolkit",
+        "tools",
+        "utils",
+    }
+    if tool_tokens.intersection(package.replace("_", "-").split("-")):
+        return True
+
+    return False
+
+
+def _is_library_package(match: PackageMatch) -> bool:
+    if match.manager != "dpkg":
+        return False
+
+    section = (match.section or "").casefold().rsplit("/", 1)[-1]
+    if section in {"libdevel", "libs", "oldlibs"}:
+        return True
+
+    if section in {
+        "admin",
+        "editors",
+        "games",
+        "graphics",
+        "interpreters",
+        "net",
+        "science",
+        "shells",
+        "sound",
+        "utils",
+        "video",
+        "web",
+        "x11",
+    }:
+        return False
+
+    package = match.package.split(":", 1)[0].casefold()
+    return package.startswith("lib")
+
+
+def _show_match(
+    match: PackageMatch,
+    apps_only: bool,
+    *,
+    direct_path_match: bool = False,
+) -> bool:
+    if not apps_only:
+        return True
+    if _is_library_package(match):
+        return False
+    return direct_path_match or _show_dpkg_match_by_default(match)
 
 
 def _flatpak_owner(executable: Path) -> str | None:
@@ -284,13 +386,54 @@ def inspect(command: str) -> Result:
     )
 
 
-def _format(result: Result) -> str:
+def _format_matches(
+    matches: Sequence[PackageMatch],
+    apps_only: bool,
+    no_limit: bool,
+    *,
+    path_records: bool = False,
+) -> list[str]:
+    visible = [
+        match for match in matches
+        if _show_match(
+            match,
+            apps_only,
+            direct_path_match=path_records and match.evidence != "name match",
+        )
+    ]
+    if not path_records:
+        visible.sort(key=lambda match: (match.manager, match.package.casefold()))
+    shown = visible if no_limit else visible[:20]
+    lines = []
+    for match in shown:
+        evidence = " ({})".format(match.evidence) if path_records else ""
+        description = "    - {}{}: {}".format(match.manager, evidence, match.package)
+        if match.section:
+            description += " [section: {}]".format(match.section)
+        if match.display_name and match.display_name.casefold() != match.package.casefold():
+            description += " ({})".format(match.display_name)
+        lines.append(description)
+        lines.append("        uninstall: " + match.uninstall)
+    remaining = len(visible) - len(shown)
+    if remaining:
+        lines.append(
+            "  ... {} more matches; use --no-limit to display all selected matches".format(remaining)
+        )
+    filtered = len(matches) - len(visible)
+    if filtered:
+        lines.append(
+            "  note: {} package match(es) excluded by --apps-only; "
+            "use --apps-only false to include them".format(filtered)
+        )
+    return lines
+
+
+def _format(result: Result, apps_only: bool = True, no_limit: bool = False) -> str:
     lines = [result.command]
     if result.executable is None:
         lines.append("  manager:    unknown")
         lines.append("  note:       " + (result.note or "command not found"))
         return "\n".join(lines)
-
     lines.extend(
         [
             "  PATH resolution:",
@@ -300,14 +443,7 @@ def _format(result: Result) -> str:
     )
     if result.matches:
         lines.append("  package manager records:")
-        for match in result.matches:
-            description = "    - {} ({}): {}".format(
-                match.manager, match.evidence, match.package
-            )
-            if match.display_name and _normalize_name(match.display_name) != _normalize_name(match.package):
-                description += " ({})".format(match.display_name)
-            lines.append(description)
-            lines.append("        uninstall: " + match.uninstall)
+        lines.extend(_format_matches(result.matches, apps_only, no_limit, path_records=True))
     else:
         lines.append("  manager:    unknown")
     if result.note:
@@ -315,7 +451,12 @@ def _format(result: Result) -> str:
     return "\n".join(lines)
 
 
-def _format_search(command: str, matches: Sequence[PackageMatch]) -> str:
+def _format_search(
+    command: str,
+    matches: Sequence[PackageMatch],
+    apps_only: bool = True,
+    no_limit: bool = False,
+) -> str:
     lines = [command, "  command:    not found in PATH"]
     if not matches:
         lines.extend(
@@ -324,19 +465,20 @@ def _format_search(command: str, matches: Sequence[PackageMatch]) -> str:
                 "  note:       no installed dpkg, snap, or flatpak package matched",
             ]
         )
-        return "\n".join(lines)
-
-    lines.append("  package name matches:")
-    shown = matches[:20]
-    for match in shown:
-        description = "  - {}: {}".format(match.manager, match.package)
-        if match.display_name and match.display_name.casefold() != match.package.casefold():
-            description += " ({})".format(match.display_name)
-        lines.append(description)
-        lines.append("      uninstall: " + match.uninstall)
-    if len(matches) > len(shown):
-        lines.append("  ... and {} more matches".format(len(matches) - len(shown)))
+    else:
+        lines.append("  package matches:")
+        lines.extend(_format_matches(matches, apps_only, no_limit))
     return "\n".join(lines)
+
+
+def _parse_bool(value: str) -> bool:
+    """Parse a boolean command-line value."""
+    normalized = value.casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise argparse.ArgumentTypeError("expected 'true' or 'false'")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -349,13 +491,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     parser.add_argument(
-        "commands",
-        nargs="+",
-        metavar="COMMAND",
+        "commands", nargs="+", metavar="COMMAND",
         help="command name, executable path, or package search text",
     )
+    parser.add_argument(
+        "--apps-only",
+        type=_parse_bool,
+        metavar="BOOL",
+        default=True,
+        help="show application/tool candidates only (true/false; default: true)",
+    )
+    parser.add_argument(
+        "--no-limit",
+        action="store_true",
+        help="display every selected match without the default 20-match limit",
+    )
     args = parser.parse_args(argv)
-
     output = []
     unresolved = False
     for command in args.commands:
@@ -363,9 +514,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.executable is None:
             matches = _search_installed_packages(command)
             unresolved = unresolved or not matches
-            output.append(_format_search(command, matches))
+            output.append(_format_search(command, matches, args.apps_only, args.no_limit))
         else:
-            output.append(_format(result))
+            output.append(_format(result, args.apps_only, args.no_limit))
     print("\n\n".join(output))
     return 1 if unresolved else 0
 
