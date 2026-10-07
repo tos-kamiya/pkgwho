@@ -645,14 +645,7 @@ def _format_matches(
     *,
     path_records: bool = False,
 ) -> list[str]:
-    visible = [
-        match for match in matches
-        if _show_match(
-            match,
-            apps_only,
-            direct_path_match=path_records and match.evidence != "name match",
-        )
-    ]
+    visible = _visible_matches(matches, apps_only, path_records=path_records)
     if not path_records:
         visible.sort(key=lambda match: (match.manager, match.package.casefold()))
     shown = visible if no_limit else visible[:20]
@@ -678,6 +671,59 @@ def _format_matches(
             "use --apps-only false to include them".format(filtered)
         )
     return lines
+
+
+def _visible_matches(
+    matches: Sequence[PackageMatch],
+    apps_only: bool,
+    *,
+    path_records: bool = False,
+) -> list[PackageMatch]:
+    return [
+        match for match in matches
+        if _show_match(
+            match,
+            apps_only,
+            direct_path_match=path_records and match.evidence != "name match",
+        )
+    ]
+
+
+def _json_result(
+    command: str,
+    result: Result,
+    matches: Sequence[PackageMatch],
+    apps_only: bool,
+) -> dict[str, object]:
+    path_records = result.executable is not None
+    visible = _visible_matches(matches, apps_only, path_records=path_records)
+    visible.sort(key=lambda match: (match.evidence == "name match", match.manager, match.package))
+    primary = visible[0] if visible else None
+    note = result.note
+    if result.executable is None and not matches:
+        note = "no installed package matched"
+
+    return {
+        "command": command,
+        "executable": result.executable,
+        "realpath": result.realpath,
+        "manager": primary.manager if primary else "unknown",
+        "package": primary.package if primary else None,
+        "uninstall": primary.uninstall if primary else None,
+        "note": note,
+        "matches": [
+            {
+                "manager": match.manager,
+                "package": match.package,
+                "uninstall": match.uninstall,
+                "evidence": match.evidence,
+                "display_name": match.display_name,
+                "section": match.section,
+            }
+            for match in visible
+        ],
+        "filtered_match_count": len(matches) - len(visible),
+    }
 
 
 def _format(result: Result, apps_only: bool = True, no_limit: bool = False) -> str:
@@ -758,6 +804,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="display every selected match without the default 20-match limit",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="output all results as a JSON array",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        dest="output_file",
+        help="write output to FILE instead of standard output",
+    )
     args = parser.parse_args(argv)
     output = []
     unresolved = False
@@ -766,10 +824,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.executable is None:
             matches = _search_installed_packages(command)
             unresolved = unresolved or not matches
-            output.append(_format_search(command, matches, args.apps_only, args.no_limit))
+            if args.json:
+                output.append(_json_result(command, result, matches, args.apps_only))
+            else:
+                output.append(_format_search(command, matches, args.apps_only, args.no_limit))
         else:
-            output.append(_format(result, args.apps_only, args.no_limit))
-    print("\n\n".join(output))
+            if args.json:
+                output.append(_json_result(command, result, result.matches, args.apps_only))
+            else:
+                output.append(_format(result, args.apps_only, args.no_limit))
+    if args.json:
+        rendered_output = json.dumps(output, ensure_ascii=False, indent=2)
+    else:
+        rendered_output = "\n\n".join(output)
+    if args.output_file is not None:
+        try:
+            Path(args.output_file).write_text(rendered_output + "\n", encoding="utf-8")
+        except OSError as exc:
+            parser.error("could not write output file {!r}: {}".format(args.output_file, exc))
+    else:
+        print(rendered_output)
     return 1 if unresolved else 0
 
 

@@ -45,6 +45,20 @@ candidates. `--apps-only` accepts `true` or `false` and defaults to `true`. The
 earlier `--all-packages` and `--all-non-libraries` options have been replaced
 by these independent controls.
 
+Use `--json` to emit a JSON array for one or more commands:
+
+```console
+pkgwho git unknown-tool --json
+pkgwho git --json --output results.json
+```
+
+Each result includes the command, resolved executable paths, primary package
+match, all selected matches, and the number of matches hidden by
+`--apps-only`. JSON output includes every selected match without the text
+output's default 20-match limit.
+Use `-o FILE` or `--output FILE` to save the selected output format to a file
+instead of printing it to standard output. Existing files are overwritten.
+
 Install from a checkout with `pip install .`, then run `pkgwho --help` for
 usage details. If no supported manager claims the executable, pkgwho reports
 `unknown` rather than guessing from its location.
