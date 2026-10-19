@@ -1005,6 +1005,112 @@ pkgwho COMMAND
 
 ---
 
+## 20. PATH 設定箇所の表示
+
+### 20.1 目的
+
+PATH 上で見つかった実行ファイルについて、その実行ファイルのディレクトリを PATH に加えているシェル設定ファイルがあれば表示する。パッケージマネージャーの所有記録がない場合に、手がかりを補う用途を主とする。
+
+これはインストール方法を特定する機能ではない。ユーザーが手動でバイナリを配置した場合も、インストーラースクリプトが配置した場合も同じ表示になり得る。出力は「PATH 設定の手がかり」とし、インストール方法を断定しない。
+
+### 20.2 基本方針
+
+- `$SHELL` や実行中のシェルを使って検索対象を絞らず、サポート対象のシェル設定をすべて調べる。
+- Bash と Fish のように複数シェルを使い分けるユーザー向けに、該当記述がある設定ファイルをすべて表示する。
+- 設定ファイルは読み取りのみとし、読み込み・実行・変更をしない。
+- 実行ファイルの親ディレクトリを PATH に加える記述を、テキスト上の一致として報告する。シェルの構文を完全に評価したり、設定が実際に有効かを断定したりしない。
+- パッケージマネージャーの判定結果と独立した補助情報として扱う。manager が `unknown` でない場合も表示可能とする。
+
+### 20.3 検索対象
+
+存在するファイルを調べる。環境変数で場所が変更されている場合は、標準位置より環境変数で指定された位置を優先する。
+
+| シェル | ユーザー設定ファイル |
+| --- | --- |
+| Bash | `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile` |
+| Zsh | `${ZDOTDIR:-$HOME}/.zshenv`, `.zprofile`, `.zshrc`, `.zlogin` |
+| Fish | `${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish` および同じ `fish` ディレクトリ直下の `conf.d/*.fish` |
+
+`ZDOTDIR` は Zsh の設定ディレクトリとして、`XDG_CONFIG_HOME` は Fish の設定ディレクトリとして解決する。これらを解決できない場合は表の既定位置を使う。
+
+初期仕様ではユーザー単位の設定ファイルを対象とし、`/etc/profile` などのシステム全体の設定、シェル設定から `source` された任意のファイル、Fish の永続変数ファイルは検索対象外とする。この制限を理由に候補が見つからない場合も、PATH 設定が存在しないとは断定しない。
+
+### 20.4 一致条件
+
+検索対象の設定ファイルに、対象実行ファイルの親ディレクトリを PATH に含めることが読み取れる記述がある場合に一致とする。少なくとも次の形式を考慮する。
+
+```bash
+export PATH="$HOME/.opencode/bin:$PATH"
+export PATH="$PATH:$HOME/.opencode/bin"
+```
+
+```zsh
+export PATH="$HOME/.opencode/bin:$PATH"
+```
+
+```fish
+fish_add_path ~/.opencode/bin
+set -gx PATH ~/.opencode/bin $PATH
+```
+
+ホームディレクトリの表記（`~`, `$HOME`, `${HOME}`）を同じパスとして扱う。パスはディレクトリ単位で比較し、部分文字列だけの一致は候補にしない。コメントだけの行は一致として扱わない。
+
+任意の shell code の評価やコマンド実行は行わない。変数展開、条件分岐、複数行構文などを安全に静的判定できない場合は、推測で一致にせず検出対象外とする。
+
+### 20.5 テキスト出力
+
+該当する記述がある場合、すべてのファイルを表示し、可能なら行番号と一致した行を添える。
+
+```text
+opencode
+  PATH resolution:
+    executable: /home/user/.opencode/bin/opencode
+    realpath:   /home/user/.opencode/bin/opencode
+  manager:    unknown
+  PATH setup candidates:
+    /home/user/.bashrc:12  export PATH="$HOME/.opencode/bin:$PATH"
+    /home/user/.config/fish/config.fish:8  fish_add_path ~/.opencode/bin
+  note:       PATH entries were found; they do not identify how the executable was installed
+```
+
+現在のシェルを根拠に候補を除外・優先表示しない。設定ファイルの順序はシェル名、パス、行番号で安定させる。
+
+該当する記述がない場合は、確認した設定ファイルの範囲を明示する。
+
+```text
+  PATH setup candidates: none found in checked user shell configuration files
+```
+
+この表示は、他のファイルや動的設定を含む PATH 設定が存在しないことを意味しない。
+
+### 20.6 JSON 出力
+
+JSON の各コマンド結果に、検出した PATH 設定箇所を配列で追加する。既存のキーは変更しない。
+
+```json
+"path_setup": [
+  {
+    "file": "/home/user/.bashrc",
+    "line": 12,
+    "entry": "export PATH=\"$HOME/.opencode/bin:$PATH\""
+  }
+]
+```
+
+一致がない場合は空配列とする。設定ファイルの内容は機密情報を含み得るため、一致した行だけを出力し、ファイル全体を JSON に含めない。
+
+### 20.7 受け入れ条件
+
+- Bash の設定ファイルに一致があれば表示される。
+- Fish の設定ファイルに一致があれば表示される。
+- Bash と Fish の両方に一致があれば、両方表示される。`$SHELL` の値で片方を除外しない。
+- Zsh と Fish の設定ディレクトリ指定環境変数があれば、指定先を調べる。
+- 実行ファイルのディレクトリと部分的にしか一致しない別パスは表示しない。
+- 設定ファイルが存在しない、読めない、または静的に判定できない場合もコマンド調査自体は成功し、PATH 設定の検出失敗をインストール方法の推定に使わない。
+- この機能は設定ファイルを変更せず、設定行を実行しない。
+
+---
+
 ありがとうございます。普段遣いにしたいのでPythonで作ってみます。
 仕様が固まれば、Rustなどで作り直しても良さそうです。
 
