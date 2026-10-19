@@ -1029,11 +1029,11 @@ PATH 上で見つかった実行ファイルについて、その実行ファイ
 | --- | --- |
 | Bash | `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile` |
 | Zsh | `${ZDOTDIR:-$HOME}/.zshenv`, `.zprofile`, `.zshrc`, `.zlogin` |
-| Fish | `${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish` および同じ `fish` ディレクトリ直下の `conf.d/*.fish` |
+| Fish | `${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish`、同じ `fish` ディレクトリ直下の `conf.d/*.fish`、Fish の universal variable `fish_user_paths` |
 
 `ZDOTDIR` は Zsh の設定ディレクトリとして、`XDG_CONFIG_HOME` は Fish の設定ディレクトリとして解決する。これらを解決できない場合は表の既定位置を使う。
 
-初期仕様ではユーザー単位の設定ファイルを対象とし、`/etc/profile` などのシステム全体の設定、シェル設定から `source` された任意のファイル、Fish の永続変数ファイルは検索対象外とする。この制限を理由に候補が見つからない場合も、PATH 設定が存在しないとは断定しない。
+初期仕様ではユーザー単位の設定を対象とし、`/etc/profile` などのシステム全体の設定と、シェル設定から `source` された任意のファイルは検索対象外とする。Fish の universal variable は `fish_variables` の既知の `VERSION: 3.0` 形式だけを読み取り、`fish_user_paths` を解析する。未知の保存形式は解析しない。Fish の設定コードや Fish 自体は実行せず、`fish_variables` も変更しない。この制限を理由に候補が見つからない場合も、PATH 設定が存在しないとは断定しない。
 
 ### 20.4 一致条件
 
@@ -1067,10 +1067,10 @@ opencode
     executable: /home/user/.opencode/bin/opencode
     realpath:   /home/user/.opencode/bin/opencode
   manager:    unknown
-  PATH setup candidates:
+  PATH entry sources:
     /home/user/.bashrc:12  export PATH="$HOME/.opencode/bin:$PATH"
     /home/user/.config/fish/config.fish:8  fish_add_path ~/.opencode/bin
-  note:       PATH entries were found; they do not identify how the executable was installed
+  note:       these sources show where PATH is recorded, not how the executable was installed
 ```
 
 現在のシェルを根拠に候補を除外・優先表示しない。設定ファイルの順序はシェル名、パス、行番号で安定させる。
@@ -1078,7 +1078,7 @@ opencode
 該当する記述がない場合は、確認した設定ファイルの範囲を明示する。
 
 ```text
-  PATH setup candidates: none found in checked user shell configuration files
+  PATH entry sources: none found in checked shell config files or recognized Fish universal paths
 ```
 
 この表示は、他のファイルや動的設定を含む PATH 設定が存在しないことを意味しない。
@@ -1097,7 +1097,7 @@ JSON の各コマンド結果に、検出した PATH 設定箇所を配列で追
 ]
 ```
 
-一致がない場合は空配列とする。設定ファイルの内容は機密情報を含み得るため、一致した行だけを出力し、ファイル全体を JSON に含めない。
+一致がない場合は空配列とする。Fish universal variable の候補では `file` と `line` は `fish_variables` 内の保存位置を示し、`entry` は一致した `fish_user_paths` の値を示す。設定ファイルの内容は機密情報を含み得るため、一致した行または値だけを出力し、ファイル全体を JSON に含めない。
 
 ### 20.7 受け入れ条件
 
@@ -1105,6 +1105,7 @@ JSON の各コマンド結果に、検出した PATH 設定箇所を配列で追
 - Fish の設定ファイルに一致があれば表示される。
 - Bash と Fish の両方に一致があれば、両方表示される。`$SHELL` の値で片方を除外しない。
 - Zsh と Fish の設定ディレクトリ指定環境変数があれば、指定先を調べる。
+- Fish universal variable の `fish_user_paths` に一致があれば、`fish_variables` のファイルと行を表示する。
 - 実行ファイルのディレクトリと部分的にしか一致しない別パスは表示しない。
 - 設定ファイルが存在しない、読めない、または静的に判定できない場合もコマンド調査自体は成功し、PATH 設定の検出失敗をインストール方法の推定に使わない。
 - この機能は設定ファイルを変更せず、設定行を実行しない。

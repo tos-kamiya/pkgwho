@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Sequence
 
 from pkgwho.__about__ import __version__
+from pkgwho.shell_config import PathSetup, find_path_setup
 
 
 @dataclass
@@ -31,6 +32,7 @@ class Result:
     uninstall: str | None = None
     note: str | None = None
     matches: list[PackageMatch] = field(default_factory=list)
+    path_setup: list[PathSetup] = field(default_factory=list)
 
 
 @dataclass
@@ -626,6 +628,7 @@ def inspect(command: str) -> Result:
             "no supported package manager claims this executable; "
             "it may have been installed manually or by another installer"
         )
+    path_setup = find_path_setup(executable.parent)
     return Result(
         command,
         str(executable),
@@ -635,6 +638,7 @@ def inspect(command: str) -> Result:
         matches[0].uninstall if matches else None,
         note,
         matches,
+        path_setup,
     )
 
 
@@ -723,6 +727,10 @@ def _json_result(
             for match in visible
         ],
         "filtered_match_count": len(matches) - len(visible),
+        "path_setup": [
+            {"file": item.file, "line": item.line, "entry": item.entry}
+            for item in result.path_setup
+        ],
     }
 
 
@@ -746,6 +754,19 @@ def _format(result: Result, apps_only: bool = True, no_limit: bool = False) -> s
         lines.append("  manager:    unknown")
     if result.note:
         lines.append("  note:       " + result.note)
+    if result.path_setup:
+        lines.append("  PATH entry sources:")
+        for item in result.path_setup:
+            lines.append(f"    {item.file}:{item.line}  {item.entry}")
+        lines.append(
+            "  note:       these sources show where PATH is recorded, not how "
+            "the executable was installed"
+        )
+    else:
+        lines.append(
+            "  PATH entry sources: none found in checked shell config files or "
+            "recognized Fish universal paths"
+        )
     return "\n".join(lines)
 
 

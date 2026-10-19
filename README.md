@@ -28,6 +28,11 @@ an installed package named `google-chrome-stable`. For a command found in
 executable records.
 The output separates PATH resolution from package-manager database records and
 labels path records separately from package-name matches.
+For resolved commands, pkgwho also checks common Bash, Zsh, and Fish user
+configuration files for static entries that add the executable directory to
+`PATH`. It also checks Fish's persistent `fish_user_paths`. It reports every
+matching source as a PATH record, not as proof of how the executable was
+installed. User configuration files are read but never executed or modified.
 For dpkg package searches, pkgwho shows a whitelist of user-facing sections
 and recognizable tool package names by default. Kernel, firmware, library,
 documentation, and other unlisted packages are hidden. Filtering and display
