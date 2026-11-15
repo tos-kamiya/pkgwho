@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.7 - 2026-11-16
+
+- Remove the `--font` alias; use `--type font` for font searches.
+- Prepare package metadata for distribution on PyPI.
+
 ## 0.0.6 - 2026-11-16
 
 - Search installed fonts by family or full name using Fontconfig, showing font
