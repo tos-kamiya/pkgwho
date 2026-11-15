@@ -7,10 +7,10 @@ uninstalls anything automatically.
 
 ## Installation
 
-Install directly from GitHub:
+Install directly from GitHub with [pipx](https://pipx.pypa.io/):
 
 ```console
-pip install git+https://github.com/tos-kamiya/pkgwho.git
+pipx install git+https://github.com/tos-kamiya/pkgwho.git
 ```
 
 ## Usage
