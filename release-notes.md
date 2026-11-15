@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0 - 2026-11-16
+
+- Separate command, package, and font searches with `--type command`,
+  `--type package`, and `--type font`; `--type all` searches all three.
+- Remove `--apps-only`; package searches now include libraries and other
+  non-application packages.
+- Add package search results to the combined JSON output.
+
 ## 0.0.7 - 2026-11-16
 
 - Remove the `--font` alias; use `--type font` for font searches.
