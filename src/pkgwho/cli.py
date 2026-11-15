@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from pkgwho.__about__ import __version__
 from pkgwho.shell_config import PathSetup, find_path_setup
@@ -43,6 +43,87 @@ class PackageMatch:
     display_name: str | None = None
     evidence: str = "name match"
     section: str | None = None
+
+
+@dataclass
+class FontMatch:
+    family: str
+    style: str
+    fullname: str
+    file: str
+    packages: list[PackageMatch] = field(default_factory=list)
+
+
+def search_fonts(query: str) -> list[FontMatch] | None:
+    """Find installed Fontconfig faces and identify their file owners."""
+    output = _run(["fc-list", "--format", "%{family}\t%{style}\t%{fullname}\t%{file}\n"])
+    if output is None:
+        return None
+    needle = _normalize_name(query)
+    matches = []
+    owners: dict[str, list[PackageMatch]] = {}
+    seen: set[tuple[str, str, str, str]] = set()
+    for line in output.splitlines():
+        fields = line.split("\t", 3)
+        if len(fields) != 4 or not fields[3]:
+            continue
+        family, style, fullname, filename = fields
+        if not any(needle in _normalize_name(name) for name in (family, fullname)):
+            continue
+        key = (family, style, fullname, filename)
+        if key in seen:
+            continue
+        seen.add(key)
+        if filename not in owners:
+            path = Path(filename)
+            try:
+                realpath = path.resolve(strict=True)
+            except OSError:
+                realpath = path
+            paths = (path,) if path == realpath else (path, realpath)
+            packages = []
+            package = _dpkg_owner(paths)
+            if package:
+                packages.append(PackageMatch("dpkg", package, "sudo apt remove " + shlex.quote(package), evidence="dpkg path record"))
+            package = _brew_owner(paths)
+            if package:
+                packages.append(PackageMatch("brew", package, "brew uninstall " + shlex.quote(package), evidence="Homebrew file record"))
+            owners[filename] = packages
+        matches.append(FontMatch(family, style, fullname, filename, owners[filename]))
+    return sorted(matches, key=lambda item: (item.family.casefold(), item.style.casefold(), item.file))
+
+
+def _font_result(query: str, matches: list[FontMatch] | None) -> dict[str, object]:
+    return {
+        "font": query,
+        "note": "Fontconfig fc-list is unavailable" if matches is None else ("no installed font matched" if not matches else None),
+        "matches": [
+            {"family": m.family, "style": m.style, "fullname": m.fullname, "file": m.file,
+             "packages": [{"manager": p.manager, "package": p.package, "uninstall": p.uninstall, "evidence": p.evidence} for p in m.packages]}
+            for m in matches or []
+        ],
+    }
+
+
+def _format_fonts(query: str, matches: list[FontMatch] | None, no_limit: bool) -> str:
+    lines = [query]
+    if matches is None:
+        lines.append("  note:       Fontconfig fc-list is unavailable")
+    elif not matches:
+        lines.append("  note:       no installed font matched")
+    else:
+        for match in matches if no_limit else matches[:20]:
+            lines.append("  font:       " + (match.fullname or match.family))
+            lines.append("    family:   " + match.family)
+            lines.append("    style:    " + match.style)
+            lines.append("    file:     " + match.file)
+            if match.packages:
+                lines.extend(_format_matches(match.packages, False, True, path_records=True))
+            else:
+                lines.append("    package:  unknown")
+        if not no_limit and len(matches) > 20:
+            lines.append("  ... {} more matches; use --no-limit to display all matches".format(len(matches) - 20))
+    return "\n".join(lines)
 
 
 def _run(args: Sequence[str]) -> str | None:
@@ -127,7 +208,7 @@ def _pipx_tools() -> list[tuple[str, set[str]]]:
     except json.JSONDecodeError:
         return []
 
-    tools = []
+    tools: list[tuple[str, set[str]]] = []
     venvs = data.get("venvs", {})
     if not isinstance(venvs, dict):
         return tools
@@ -206,7 +287,7 @@ def _cargo_tools() -> list[tuple[str, set[str]]]:
 
 @lru_cache(maxsize=1)
 def _brew_packages() -> list[tuple[str, str]]:
-    packages = []
+    packages: list[tuple[str, str]] = []
     for kind, args in (
         ("formula", ["brew", "list", "--formula"]),
         ("cask", ["brew", "list", "--cask"]),
@@ -804,14 +885,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pkgwho",
         description=(
-            "Find which supported package manager installed a command, or search "
-            "installed packages when it is not in PATH."
+            "Search commands, installed packages, and Fontconfig fonts."
         ),
     )
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
+    search_type = parser.add_mutually_exclusive_group()
+    search_type.add_argument(
+        "--type", choices=("command", "font", "all"), default="all",
+        help="what to search (default: all)",
+    )
+    search_type.add_argument(
+        "--font", dest="type", action="store_const", const="font",
+        help="alias for --type font",
+    )
     parser.add_argument(
-        "commands", nargs="+", metavar="COMMAND",
-        help="command name, executable path, or package search text",
+        "commands", nargs="+", metavar="QUERY",
+        help="command, package, or font search text",
     )
     parser.add_argument(
         "--apps-only",
@@ -838,22 +927,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="write output to FILE instead of standard output",
     )
     args = parser.parse_args(argv)
-    output = []
+    output: list[Any] = []
     unresolved = False
     for command in args.commands:
-        result = inspect(command)
-        if result.executable is None:
-            matches = _search_installed_packages(command)
-            unresolved = unresolved or not matches
-            if args.json:
-                output.append(_json_result(command, result, matches, args.apps_only))
+        command_output: Any = None
+        font_output: Any = None
+        found = False
+        if args.type in ("command", "all"):
+            result = inspect(command)
+            if result.executable is None:
+                matches = _search_installed_packages(command)
+                found = bool(matches)
+                if args.json:
+                    command_output = _json_result(command, result, matches, args.apps_only)
+                else:
+                    command_output = _format_search(command, matches, args.apps_only, args.no_limit)
             else:
-                output.append(_format_search(command, matches, args.apps_only, args.no_limit))
+                found = True
+                if args.json:
+                    command_output = _json_result(command, result, result.matches, args.apps_only)
+                else:
+                    command_output = _format(result, args.apps_only, args.no_limit)
+        if args.type in ("font", "all"):
+            font_matches = search_fonts(command)
+            found = found or bool(font_matches)
+            if args.json:
+                font_output = _font_result(command, font_matches)
+            else:
+                font_output = _format_fonts(command, font_matches, args.no_limit)
+        unresolved = unresolved or not found
+        if args.type == "all":
+            if args.json:
+                output.append({"query": command, "command": command_output, "font": font_output})
+            else:
+                output.append("Command search:\n" + command_output + "\n\nFont search:\n" + font_output)
+        elif args.type == "command":
+            output.append(command_output)
         else:
-            if args.json:
-                output.append(_json_result(command, result, result.matches, args.apps_only))
-            else:
-                output.append(_format(result, args.apps_only, args.no_limit))
+            output.append(font_output)
     if args.json:
         rendered_output = json.dumps(output, ensure_ascii=False, indent=2)
     else:

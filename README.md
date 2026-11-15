@@ -5,7 +5,7 @@ checks dpkg/apt, Snap, Flatpak, pipx, uv tools, Cargo, and Homebrew, and suggest
 how to remove the package. It never uninstalls anything automatically.
 
 ```console
-$ pkgwho git
+$ pkgwho --type command git
 git
   executable: /usr/bin/git
   realpath:   /usr/bin/git
@@ -20,6 +20,28 @@ Pass one or more command names, or a path to an executable:
 pkgwho git snap flatpak
 pkgwho /usr/local/bin/my-command
 ```
+
+By default, each query searches both commands/packages and installed fonts.
+Use `--type command` or `--type font` to search only one kind; `--type all`
+explicitly selects the default. `--font` is an alias for `--type font`.
+For example:
+
+```console
+pkgwho --type font "Noto Sans"
+pkgwho --type font "Noto Sans" --json
+```
+
+Font searches use Fontconfig's `fc-list` and match names case- and
+punctuation-insensitively. Each matching face includes its font file and,
+when found in the dpkg or Homebrew formula database, its package and suggested
+uninstall command. An unowned file is still shown with an unknown package.
+Install Fontconfig if `fc-list` is unavailable. The default text output shows
+up to 20 faces; `--no-limit` shows all faces. `--apps-only` does not filter
+font results, and JSON includes all matching faces. A missing font or
+unavailable `fc-list` yields a nonzero exit status in font-only mode. In
+combined mode, a query succeeds if either search finds a result; an unavailable
+`fc-list` is reported in the font result. The overall exit status is nonzero
+if any query has no result in the selected search types.
 
 If a command is not found in `PATH`, pkgwho searches installed package names
 using a case-insensitive partial match. For example, `pkgwho chrome` can find
@@ -50,14 +72,17 @@ candidates. `--apps-only` accepts `true` or `false` and defaults to `true`. The
 earlier `--all-packages` and `--all-non-libraries` options have been replaced
 by these independent controls.
 
-Use `--json` to emit a JSON array for one or more commands:
+Use `--json` to emit a JSON array for one or more queries:
 
 ```console
 pkgwho git unknown-tool --json
 pkgwho git --json --output results.json
 ```
 
-Each result includes the command, resolved executable paths, primary package
+In combined mode, each array element contains `query`, `command`, and `font`
+fields, with the latter two holding their respective search results. In
+single-type mode each element contains that search's result directly. Each
+command result includes the command, resolved executable paths, primary package
 match, all selected matches, and the number of matches hidden by
 `--apps-only`. JSON output includes every selected match without the text
 output's default 20-match limit.
