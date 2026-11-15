@@ -48,6 +48,9 @@ Changelog = "https://github.com/tos-kamiya/pkgwho/blob/main/release-notes.md"
 [tool.hatch.version]
 path = "src/pkgwho/__about__.py"
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/dev-notes"]
+
 [tool.hatch.envs.types]
 extra-dependencies = [
   "mypy>=1.0.0",

@@ -3,7 +3,6 @@
 ## Project Structure
 - `src/pkgwho/`: Python package and CLI implementation.
 - `tests/`: pytest tests (`test_*.py`).
-- `handoff.md`: broader product goals and detector design.
 - Root metadata and user documentation: `pyproject.toml`, `README.md`.
 
 ## Development
