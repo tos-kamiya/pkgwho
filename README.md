@@ -7,7 +7,11 @@ uninstalls anything automatically.
 
 ## Installation
 
-Install from a checkout with `pip install .`.
+Install directly from GitHub:
+
+```console
+pip install git+https://github.com/tos-kamiya/pkgwho.git
+```
 
 ## Usage
 
