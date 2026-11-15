@@ -32,13 +32,13 @@ def test_font_search_identifies_owners_and_unowned_files(monkeypatch, tmp_path):
 
 def test_font_cli_json_and_failures(monkeypatch, capsys):
     monkeypatch.setattr(cli, "search_fonts", lambda query: [cli.FontMatch("Example", "Regular", "Example Regular", "/fonts/example.ttf")])
-    assert cli.main(["--font", "example", "--json"]) == 0
+    assert cli.main(["--type", "font", "example", "--json"]) == 0
     assert '"file": "/fonts/example.ttf"' in capsys.readouterr().out
     monkeypatch.setattr(cli, "search_fonts", lambda query: None)
-    assert cli.main(["--font", "missing"]) == 1
+    assert cli.main(["--type", "font", "missing"]) == 1
     assert "fc-list is unavailable" in capsys.readouterr().out
     monkeypatch.setattr(cli, "search_fonts", lambda query: [])
-    assert cli.main(["--font", "missing"]) == 1
+    assert cli.main(["--type", "font", "missing"]) == 1
     assert "no installed font matched" in capsys.readouterr().out
 
 

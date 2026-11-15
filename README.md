@@ -23,7 +23,7 @@ pkgwho /usr/local/bin/my-command
 
 By default, each query searches both commands/packages and installed fonts.
 Use `--type command` or `--type font` to search only one kind; `--type all`
-explicitly selects the default. `--font` is an alias for `--type font`.
+explicitly selects the default.
 For example:
 
 ```console

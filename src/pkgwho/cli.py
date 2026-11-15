@@ -889,14 +889,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
-    search_type = parser.add_mutually_exclusive_group()
-    search_type.add_argument(
+    parser.add_argument(
         "--type", choices=("command", "font", "all"), default="all",
         help="what to search (default: all)",
-    )
-    search_type.add_argument(
-        "--font", dest="type", action="store_const", const="font",
-        help="alias for --type font",
     )
     parser.add_argument(
         "commands", nargs="+", metavar="QUERY",
