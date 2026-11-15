@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 - 2026-11-16
+
+- Exclude development notes from source distributions.
+- Remove the obsolete handoff document.
+
 ## 0.1.0 - 2026-11-16
 
 - Separate command, package, and font searches with `--type command`,
