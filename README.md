@@ -6,12 +6,6 @@ how to remove the package. It never uninstalls anything automatically.
 
 ```console
 $ pkgwho --type command git
-git
-  executable: /usr/bin/git
-  realpath:   /usr/bin/git
-  manager:    dpkg
-  package:    git
-  uninstall:  sudo apt remove git
 ```
 
 Pass one or more command names, or a path to an executable:
@@ -21,9 +15,10 @@ pkgwho git snap flatpak
 pkgwho /usr/local/bin/my-command
 ```
 
-By default, each query searches both commands/packages and installed fonts.
-Use `--type command` or `--type font` to search only one kind; `--type all`
-explicitly selects the default.
+By default, each query searches commands, installed packages, and fonts.
+Use `--type command` to resolve a command in PATH and identify its owner,
+`--type package` to search installed package names, or `--type font` to
+search fonts. `--type all` explicitly selects the default.
 For example:
 
 ```console
@@ -36,41 +31,25 @@ punctuation-insensitively. Each matching face includes its font file and,
 when found in the dpkg or Homebrew formula database, its package and suggested
 uninstall command. An unowned file is still shown with an unknown package.
 Install Fontconfig if `fc-list` is unavailable. The default text output shows
-up to 20 faces; `--no-limit` shows all faces. `--apps-only` does not filter
-font results, and JSON includes all matching faces. A missing font or
+up to 20 faces; `--no-limit` shows all faces. JSON includes all matching faces. A missing font or
 unavailable `fc-list` yields a nonzero exit status in font-only mode. In
-combined mode, a query succeeds if either search finds a result; an unavailable
+combined mode, a query succeeds if any search finds a result; an unavailable
 `fc-list` is reported in the font result. The overall exit status is nonzero
 if any query has no result in the selected search types.
 
-If a command is not found in `PATH`, pkgwho searches installed package names
-using a case-insensitive partial match. For example, `pkgwho chrome` can find
-an installed package named `google-chrome-stable`. For a command found in
-`PATH`, pkgwho checks manager databases for matching package names and
-executable records.
-The output separates PATH resolution from package-manager database records and
-labels path records separately from package-name matches.
+Command searches resolve names in `PATH` and query package manager file or
+executable records. Package searches use case-insensitive partial matches on
+installed package names and include libraries and other non-application
+packages. For example, `pkgwho --type package chrome` can find an installed
+package named `google-chrome-stable`. A command search does not fall back to
+package-name search; the default combined search performs both independently.
 For resolved commands, pkgwho also checks common Bash, Zsh, and Fish user
 configuration files for static entries that add the executable directory to
 `PATH`. It also checks Fish's persistent `fish_user_paths`. It reports every
 matching source as a PATH record, not as proof of how the executable was
 installed. User configuration files are read but never executed or modified.
-For dpkg package searches, pkgwho shows a whitelist of user-facing sections
-and recognizable tool package names by default. Kernel, firmware, library,
-documentation, and other unlisted packages are hidden. Filtering and display
-limits are controlled independently:
-
-| Options | Packages selected | Display limit |
-| --- | --- | --- |
-| Default (`--apps-only true`) | Application/tool candidates | 20 |
-| `--no-limit` | Application/tool candidates | Unlimited |
-| `--apps-only false` | All matching packages, including libraries | 20 |
-| `--apps-only false --no-limit` | All matching packages, including libraries | Unlimited |
-
-For example, `pkgwho nvidia --no-limit` displays all selected application/tool
-candidates. `--apps-only` accepts `true` or `false` and defaults to `true`. The
-earlier `--all-packages` and `--all-non-libraries` options have been replaced
-by these independent controls.
+Text output shows up to 20 results per search. Use `--no-limit` to display
+all matches.
 
 Use `--json` to emit a JSON array for one or more queries:
 
@@ -79,13 +58,10 @@ pkgwho git unknown-tool --json
 pkgwho git --json --output results.json
 ```
 
-In combined mode, each array element contains `query`, `command`, and `font`
-fields, with the latter two holding their respective search results. In
-single-type mode each element contains that search's result directly. Each
-command result includes the command, resolved executable paths, primary package
-match, all selected matches, and the number of matches hidden by
-`--apps-only`. JSON output includes every selected match without the text
-output's default 20-match limit.
+In combined mode, each array element contains `query`, `command`, `package`,
+and `font` fields. In single-type mode each element contains that search's
+result directly. JSON output includes all matches without the text output's
+default 20-match limit.
 Use `-o FILE` or `--output FILE` to save the selected output format to a file
 instead of printing it to standard output. Existing files are overwritten.
 

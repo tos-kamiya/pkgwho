@@ -118,7 +118,7 @@ def _format_fonts(query: str, matches: list[FontMatch] | None, no_limit: bool) -
             lines.append("    style:    " + match.style)
             lines.append("    file:     " + match.file)
             if match.packages:
-                lines.extend(_format_matches(match.packages, False, True, path_records=True))
+                lines.extend(_format_matches(match.packages, True, path_records=True))
             else:
                 lines.append("    package:  unknown")
         if not no_limit and len(matches) > 20:
@@ -462,104 +462,6 @@ def _normalize_name(value: str) -> str:
     return "".join(character for character in value.casefold() if character.isalnum())
 
 
-def _show_dpkg_match_by_default(match: PackageMatch) -> bool:
-    if match.manager != "dpkg":
-        return True
-
-    section = (match.section or "").casefold().rsplit("/", 1)[-1]
-    if section in {
-        "admin",
-        "comm",
-        "editors",
-        "games",
-        "graphics",
-        "interpreters",
-        "net",
-        "science",
-        "shells",
-        "sound",
-        "utils",
-        "video",
-        "web",
-        "x11",
-    }:
-        return True
-
-    if section in {
-        "debug",
-        "doc",
-        "documentation",
-        "kernel",
-        "libdevel",
-        "libs",
-        "misc",
-        "oldlibs",
-    }:
-        return False
-
-    # Some third-party repositories use a vendor name as the Section (for
-    # example, "NVIDIA"). Allow recognizable command/tool package names there,
-    # while leaving kernels, firmware, libraries, documentation, and meta
-    # packages hidden by default.
-    package = match.package.split(":", 1)[0].casefold()
-    tool_tokens = {
-        "bin",
-        "cli",
-        "gdb",
-        "settings",
-        "smi",
-        "toolkit",
-        "tools",
-        "utils",
-    }
-    if tool_tokens.intersection(package.replace("_", "-").split("-")):
-        return True
-
-    return False
-
-
-def _is_library_package(match: PackageMatch) -> bool:
-    if match.manager != "dpkg":
-        return False
-
-    section = (match.section or "").casefold().rsplit("/", 1)[-1]
-    if section in {"libdevel", "libs", "oldlibs"}:
-        return True
-
-    if section in {
-        "admin",
-        "editors",
-        "games",
-        "graphics",
-        "interpreters",
-        "net",
-        "science",
-        "shells",
-        "sound",
-        "utils",
-        "video",
-        "web",
-        "x11",
-    }:
-        return False
-
-    package = match.package.split(":", 1)[0].casefold()
-    return package.startswith("lib")
-
-
-def _show_match(
-    match: PackageMatch,
-    apps_only: bool,
-    *,
-    direct_path_match: bool = False,
-) -> bool:
-    if not apps_only:
-        return True
-    if _is_library_package(match):
-        return False
-    return direct_path_match or _show_dpkg_match_by_default(match)
-
-
 def _flatpak_owner(executable: Path) -> str | None:
     # Flatpak exports launchers under exports/bin/<application-id>. A normal
     # command provided inside an app is not exposed on the host PATH.
@@ -671,38 +573,8 @@ def inspect(command: str) -> Result:
             )
         )
 
-    # Also search other managers for the command or the package name that owns
-    # its active executable. This can reveal parallel installs such as a deb
-    # and a Flatpak with differently punctuated names (draw.io / drawio).
-    search_terms = {executable.name}
-    search_terms.update(match.package for match in direct_matches)
-    direct_managers = {match.manager for match in direct_matches}
-    matches = list(direct_matches)
-    seen = {(match.manager, match.package) for match in matches}
-    for term in search_terms:
-        normalized_term = _normalize_name(term)
-        if not normalized_term:
-            continue
-        for candidate in _search_installed_packages(term):
-            identity = (candidate.manager, candidate.package)
-            if identity in seen or candidate.manager in direct_managers:
-                continue
-            candidate_names = [candidate.package, candidate.display_name or ""]
-            if not any(
-                normalized_term == _normalize_name(name)
-                or (
-                    len(normalized_term) >= 4
-                    and normalized_term in _normalize_name(name)
-                )
-                for name in candidate_names
-            ):
-                continue
-            seen.add(identity)
-            matches.append(candidate)
-
-    matches.sort(
-        key=lambda match: (match.evidence == "name match", match.manager, match.package)
-    )
+    matches = direct_matches
+    matches.sort(key=lambda match: (match.manager, match.package))
     note = None
     if not matches:
         note = (
@@ -725,12 +597,11 @@ def inspect(command: str) -> Result:
 
 def _format_matches(
     matches: Sequence[PackageMatch],
-    apps_only: bool,
     no_limit: bool,
     *,
     path_records: bool = False,
 ) -> list[str]:
-    visible = _visible_matches(matches, apps_only, path_records=path_records)
+    visible = list(matches)
     if not path_records:
         visible.sort(key=lambda match: (match.manager, match.package.casefold()))
     shown = visible if no_limit else visible[:20]
@@ -749,44 +620,18 @@ def _format_matches(
         lines.append(
             "  ... {} more matches; use --no-limit to display all selected matches".format(remaining)
         )
-    filtered = len(matches) - len(visible)
-    if filtered:
-        lines.append(
-            "  note: {} package match(es) excluded by --apps-only; "
-            "use --apps-only false to include them".format(filtered)
-        )
     return lines
-
-
-def _visible_matches(
-    matches: Sequence[PackageMatch],
-    apps_only: bool,
-    *,
-    path_records: bool = False,
-) -> list[PackageMatch]:
-    return [
-        match for match in matches
-        if _show_match(
-            match,
-            apps_only,
-            direct_path_match=path_records and match.evidence != "name match",
-        )
-    ]
 
 
 def _json_result(
     command: str,
     result: Result,
     matches: Sequence[PackageMatch],
-    apps_only: bool,
 ) -> dict[str, object]:
-    path_records = result.executable is not None
-    visible = _visible_matches(matches, apps_only, path_records=path_records)
+    visible = list(matches)
     visible.sort(key=lambda match: (match.evidence == "name match", match.manager, match.package))
     primary = visible[0] if visible else None
     note = result.note
-    if result.executable is None and not matches:
-        note = "no installed package matched"
 
     return {
         "command": command,
@@ -807,7 +652,6 @@ def _json_result(
             }
             for match in visible
         ],
-        "filtered_match_count": len(matches) - len(visible),
         "path_setup": [
             {"file": item.file, "line": item.line, "entry": item.entry}
             for item in result.path_setup
@@ -815,7 +659,7 @@ def _json_result(
     }
 
 
-def _format(result: Result, apps_only: bool = True, no_limit: bool = False) -> str:
+def _format(result: Result, no_limit: bool = False) -> str:
     lines = [result.command]
     if result.executable is None:
         lines.append("  manager:    unknown")
@@ -830,7 +674,7 @@ def _format(result: Result, apps_only: bool = True, no_limit: bool = False) -> s
     )
     if result.matches:
         lines.append("  package manager records:")
-        lines.extend(_format_matches(result.matches, apps_only, no_limit, path_records=True))
+        lines.extend(_format_matches(result.matches, no_limit, path_records=True))
     else:
         lines.append("  manager:    unknown")
     if result.note:
@@ -854,10 +698,9 @@ def _format(result: Result, apps_only: bool = True, no_limit: bool = False) -> s
 def _format_search(
     command: str,
     matches: Sequence[PackageMatch],
-    apps_only: bool = True,
     no_limit: bool = False,
 ) -> str:
-    lines = [command, "  command:    not found in PATH"]
+    lines = [command]
     if not matches:
         lines.extend(
             [
@@ -867,18 +710,8 @@ def _format_search(
         )
     else:
         lines.append("  package matches:")
-        lines.extend(_format_matches(matches, apps_only, no_limit))
+        lines.extend(_format_matches(matches, no_limit))
     return "\n".join(lines)
-
-
-def _parse_bool(value: str) -> bool:
-    """Parse a boolean command-line value."""
-    normalized = value.casefold()
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    raise argparse.ArgumentTypeError("expected 'true' or 'false'")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -890,19 +723,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     parser.add_argument(
-        "--type", choices=("command", "font", "all"), default="all",
+        "--type", choices=("command", "package", "font", "all"), default="all",
         help="what to search (default: all)",
     )
     parser.add_argument(
         "commands", nargs="+", metavar="QUERY",
         help="command, package, or font search text",
-    )
-    parser.add_argument(
-        "--apps-only",
-        type=_parse_bool,
-        metavar="BOOL",
-        default=True,
-        help="show application/tool candidates only (true/false; default: true)",
     )
     parser.add_argument(
         "--no-limit",
@@ -925,41 +751,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     output: list[Any] = []
     unresolved = False
     for command in args.commands:
-        command_output: Any = None
-        font_output: Any = None
+        results: dict[str, Any] = {}
         found = False
         if args.type in ("command", "all"):
             result = inspect(command)
-            if result.executable is None:
-                matches = _search_installed_packages(command)
-                found = bool(matches)
-                if args.json:
-                    command_output = _json_result(command, result, matches, args.apps_only)
-                else:
-                    command_output = _format_search(command, matches, args.apps_only, args.no_limit)
-            else:
-                found = True
-                if args.json:
-                    command_output = _json_result(command, result, result.matches, args.apps_only)
-                else:
-                    command_output = _format(result, args.apps_only, args.no_limit)
+            found = result.executable is not None
+            results["command"] = (
+                _json_result(command, result, result.matches)
+                if args.json else _format(result, args.no_limit)
+            )
+        if args.type in ("package", "all"):
+            matches = _search_installed_packages(command)
+            found = found or bool(matches)
+            results["package"] = (
+                {"query": command, "matches": [
+                    {"manager": m.manager, "package": m.package,
+                     "uninstall": m.uninstall, "evidence": m.evidence,
+                     "display_name": m.display_name, "section": m.section}
+                    for m in matches
+                ], "note": None if matches else "no installed package matched"}
+                if args.json else _format_search(command, matches, args.no_limit)
+            )
         if args.type in ("font", "all"):
             font_matches = search_fonts(command)
             found = found or bool(font_matches)
-            if args.json:
-                font_output = _font_result(command, font_matches)
-            else:
-                font_output = _format_fonts(command, font_matches, args.no_limit)
+            results["font"] = (
+                _font_result(command, font_matches)
+                if args.json else _format_fonts(command, font_matches, args.no_limit)
+            )
         unresolved = unresolved or not found
         if args.type == "all":
             if args.json:
-                output.append({"query": command, "command": command_output, "font": font_output})
+                output.append({"query": command, **results})
             else:
-                output.append("Command search:\n" + command_output + "\n\nFont search:\n" + font_output)
-        elif args.type == "command":
-            output.append(command_output)
+                output.append("\n\n".join(
+                    name.capitalize() + " search:\n" + results[name]
+                    for name in ("command", "package", "font")
+                ))
         else:
-            output.append(font_output)
+            output.append(results[args.type])
     if args.json:
         rendered_output = json.dumps(output, ensure_ascii=False, indent=2)
     else:
