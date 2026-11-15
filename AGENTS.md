@@ -28,3 +28,4 @@
   `feat: add snap detection`, `fix: handle missing package tools`, or
   `docs: clarify package search`.
 - Create commits with elevated permissions.
+- Update `release-notes.md` in the same commit whenever bumping the version.

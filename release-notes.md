@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.6 - 2026-11-16
+
+- Search installed fonts by family or full name using Fontconfig, showing font
+  files and their dpkg or Homebrew package owners when available.
+- Search commands and fonts by default; use `--type command`, `--type font`,
+  or `--type all` to select the search scope.
+- Support JSON output and display limits for font search results.
+
+## 0.0.5 - 2026-10-19
+
+- Report shell configuration sources that add a resolved command's directory
+  to PATH, including Bash, Zsh, Fish, and Fish's persistent `fish_user_paths`.
+- Distinguish PATH configuration records from evidence of package ownership.
+
 ## 0.0.4 - 2026-10-07
 
 - Add JSON output for one or more commands.
