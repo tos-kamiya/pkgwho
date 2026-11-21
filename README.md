@@ -119,6 +119,17 @@ Show the installed pkgwho version and exit.
 - **Cargo**: maps binaries from `cargo install --list` to installed crates.
 - **Homebrew**: queries installed formulae and matches files listed by Homebrew.
 
+## Development
+
+Run the full test suite on CPython 3.9 through 3.15 with:
+
+```console
+scripts/run_python_matrix.sh
+```
+
+The script uses `uv`, creates separate environments under `.venv-matrix/`, and
+installs the package and development dependencies in each environment.
+
 ## License
 
 `pkgwho` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.

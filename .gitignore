@@ -13,6 +13,7 @@ build/
 dist/
 *.egg-info/
 .venv/
+.venv-matrix/
 venv/
 ENV/
 
