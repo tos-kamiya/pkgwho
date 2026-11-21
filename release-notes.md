@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-11-21
+
+- Support Python 3.9 and newer.
+- Add a script to run the test suite across CPython 3.9 through 3.15.
+
 ## 0.2.0 - 2026-11-21
 
 - Search desktop applications by their translated names, `.desktop` filenames,
