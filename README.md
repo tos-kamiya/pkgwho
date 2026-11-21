@@ -1,5 +1,9 @@
 # pkgwho
 
+[![PyPI version](https://img.shields.io/pypi/v/pkgwho)](https://pypi.org/project/pkgwho/)
+[![PyPI downloads](https://static.pepy.tech/personalized-badge/pkgwho?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/pkgwho)
+[![Python 3.9-3.15](https://img.shields.io/badge/Python-3.9--3.15-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+
 Find which package manager installed a command, font, or desktop application on Linux, or search
 installed packages by name. pkgwho checks dpkg/apt, Snap, Flatpak, pipx, uv
 tools, Cargo, and Homebrew, and suggests how to remove packages. It never
