@@ -7,6 +7,8 @@ uninstalls anything automatically.
 
 ## Installation
 
+Python 3.9 or newer is required.
+
 Install directly from GitHub with [pipx](https://pipx.pypa.io/):
 
 ```console

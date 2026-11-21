@@ -14,7 +14,7 @@
   `uv run --python .venv/bin/python mypy src/pkgwho`.
 - Run pytest with elevated permissions:
   `uv run --python .venv/bin/python pytest`.
-- Python 3.10 or newer is supported. Use type hints and 4-space indentation.
+- Python 3.9 or newer is supported. Use type hints and 4-space indentation.
 - Use elevated permissions when a required development or system operation
   cannot be completed with normal permissions.
 
