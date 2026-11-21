@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 - 2026-11-21
+
+- Search desktop applications by their translated names, `.desktop` filenames,
+  or explicit file paths, and report package owners when identifiable.
+- Include desktop applications in `--type all` searches and support JSON output
+  and display limits for desktop search results.
+
 ## 0.1.1 - 2026-11-16
 
 - Exclude development notes from source distributions.

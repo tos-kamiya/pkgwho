@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import json
 import os
 import re
@@ -52,6 +53,120 @@ class FontMatch:
     fullname: str
     file: str
     packages: list[PackageMatch] = field(default_factory=list)
+
+
+@dataclass
+class DesktopMatch:
+    name: str
+    matched_names: list[str]
+    file: str
+    packages: list[PackageMatch] = field(default_factory=list)
+
+
+def _desktop_files() -> list[Path]:
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
+    data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    seen: set[str] = set()
+    files: list[Path] = []
+    for root in [data_home, *data_dirs.split(":")]:
+        if not root or not Path(root).is_absolute():
+            continue
+        directory = Path(root) / "applications"
+        for path in sorted(directory.rglob("*.desktop")):
+            desktop_id = "-".join(path.relative_to(directory).parts)
+            if desktop_id not in seen:
+                seen.add(desktop_id)
+                files.append(path)
+    return files
+
+
+class _DesktopParser(configparser.ConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
+
+
+def _desktop_entry(path: Path) -> dict[str, str] | None:
+    parser = _DesktopParser(interpolation=None, strict=False, delimiters=("=",))
+    try:
+        with path.open(encoding="utf-8") as stream:
+            parser.read_file(stream)
+        entry = dict(parser["Desktop Entry"])
+    except (OSError, UnicodeError, configparser.Error, KeyError):
+        return None
+    if entry.get("Type") != "Application" or entry.get("Hidden", "").lower() == "true":
+        return None
+    return entry
+
+
+def _desktop_packages(path: Path) -> list[PackageMatch]:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError:
+        resolved = path
+    paths = (path,) if path == resolved else (path, resolved)
+    matches: list[PackageMatch] = []
+    package = _dpkg_owner(paths)
+    if package:
+        matches.append(PackageMatch("dpkg", package, "sudo apt remove " + shlex.quote(package), evidence="dpkg path record"))
+    package = _brew_owner(paths)
+    if package:
+        matches.append(PackageMatch("brew", package, "brew uninstall " + shlex.quote(package), evidence="Homebrew file record"))
+    if path.parent == Path("/var/lib/snapd/desktop/applications"):
+        candidates = [name for name in _snap_packages() if path.name.startswith(name + "_")]
+        if candidates:
+            package = max(candidates, key=len)
+            matches.append(PackageMatch("snap", package, "sudo snap remove " + shlex.quote(package), evidence="Snap desktop export"))
+    if tuple(path.parent.parts[-3:]) == ("exports", "share", "applications"):
+        package = path.stem
+        if package in _flatpak_apps():
+            matches.append(PackageMatch("flatpak", package, "flatpak uninstall " + shlex.quote(package), evidence="Flatpak desktop export"))
+    return matches
+
+
+def search_desktop(query: str) -> list[DesktopMatch]:
+    direct = "/" in query and query.casefold().endswith(".desktop")
+    filename_search = query.casefold().endswith(".desktop")
+    files = [Path(os.path.expandvars(os.path.expanduser(query))).absolute()] if direct else _desktop_files()
+    matches: list[DesktopMatch] = []
+    for path in files:
+        if filename_search and not direct and query.casefold() not in path.name.casefold():
+            continue
+        entry = _desktop_entry(path)
+        if entry is None:
+            continue
+        names = [value for key, value in entry.items() if key == "Name" or (key.startswith("Name[") and key.endswith("]"))]
+        matched = [name for name in names if query.casefold() in name.casefold()]
+        if not filename_search and not matched:
+            continue
+        matches.append(DesktopMatch(entry.get("Name", ""), matched, str(path), _desktop_packages(path)))
+    return matches
+
+
+def _desktop_result(query: str, matches: list[DesktopMatch]) -> dict[str, object]:
+    return {"query": query, "note": None if matches else "no desktop application matched", "matches": [
+        {"name": m.name, "matched_names": m.matched_names, "file": m.file,
+         "packages": [{"manager": p.manager, "package": p.package, "uninstall": p.uninstall, "evidence": p.evidence} for p in m.packages]}
+        for m in matches
+    ]}
+
+
+def _format_desktop(query: str, matches: list[DesktopMatch], no_limit: bool) -> str:
+    lines = [query]
+    if not matches:
+        lines.append("  note:       no desktop application matched")
+    for match in matches if no_limit else matches[:20]:
+        lines.append("  application: " + (match.name or Path(match.file).name))
+        for name in match.matched_names:
+            if name != match.name:
+                lines.append("    matched:  " + name)
+        lines.append("    file:     " + match.file)
+        if match.packages:
+            lines.extend(_format_matches(match.packages, True, path_records=True))
+        else:
+            lines.append("    package:  unknown")
+    if not no_limit and len(matches) > 20:
+        lines.append("  ... {} more matches; use --no-limit to display all matches".format(len(matches) - 20))
+    return "\n".join(lines)
 
 
 def search_fonts(query: str) -> list[FontMatch] | None:
@@ -718,17 +833,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pkgwho",
         description=(
-            "Search commands, installed packages, and Fontconfig fonts."
+            "Search commands, installed packages, fonts, and desktop applications."
         ),
     )
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     parser.add_argument(
-        "--type", choices=("command", "package", "font", "all"), default="all",
+        "--type", choices=("command", "package", "font", "desktop", "all"), default="all",
         help="what to search (default: all)",
     )
     parser.add_argument(
         "commands", nargs="+", metavar="QUERY",
-        help="command, package, or font search text",
+        help="command, package, font, or desktop application search text",
     )
     parser.add_argument(
         "--no-limit",
@@ -779,6 +894,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _font_result(command, font_matches)
                 if args.json else _format_fonts(command, font_matches, args.no_limit)
             )
+        if args.type in ("desktop", "all"):
+            desktop_matches = search_desktop(command)
+            found = found or bool(desktop_matches)
+            results["desktop"] = (
+                _desktop_result(command, desktop_matches)
+                if args.json else _format_desktop(command, desktop_matches, args.no_limit)
+            )
         unresolved = unresolved or not found
         if args.type == "all":
             if args.json:
@@ -786,7 +908,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 output.append("\n\n".join(
                     name.capitalize() + " search:\n" + results[name]
-                    for name in ("command", "package", "font")
+                    for name in ("command", "package", "font", "desktop")
                 ))
         else:
             output.append(results[args.type])

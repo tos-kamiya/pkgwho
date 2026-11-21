@@ -62,6 +62,7 @@ def test_search_type_selection_and_combined_results(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "_search_installed_packages", packages)
     monkeypatch.setattr(cli, "search_fonts", fonts)
+    monkeypatch.setattr(cli, "search_desktop", lambda query: [])
     assert cli.main(["example", "--json"]) == 0
     result = json.loads(capsys.readouterr().out)[0]
     assert calls == ["command", "package", "font"]
@@ -90,6 +91,7 @@ def test_search_type_selection_and_combined_results(monkeypatch, capsys):
 def test_combined_command_success_and_font_unavailable(monkeypatch, capsys):
     monkeypatch.setattr(cli, "inspect", lambda query: cli.Result(query, "/bin/tool", "/bin/tool", "unknown"))
     monkeypatch.setattr(cli, "search_fonts", lambda query: None)
+    monkeypatch.setattr(cli, "search_desktop", lambda query: [])
     assert cli.main(["tool"]) == 0
     assert "fc-list is unavailable" in capsys.readouterr().out
     monkeypatch.setattr(cli, "inspect", lambda query: cli.Result(query, None, None, "unknown"))
